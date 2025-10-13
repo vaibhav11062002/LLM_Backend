@@ -191,3 +191,5 @@ LLM_Backend/connection/migrations/0002_connection_sample_del.py
 LLM_Backend/connection/migrations/*
 LLM_Backend/connection/migrations/0001_initial.py
 LLM_Backend/connection/migrations/*
+connection/migrations/__init__.py
+connection/migrations/*
