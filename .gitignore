@@ -1,4 +1,4 @@
-LLM_Backend/db.sqlite3
+# LLM_Backend/db.sqlite3
 node_modules/
 # Byte-compiled / optimized / DLL files
 __pycache__/
