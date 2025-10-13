@@ -1,0 +1,589 @@
+query_understanding: |
+  Analyze this natural language query and extract structured information.
+
+  Primary Table: {table_name}
+  Available Tables and Columns: {all_tables_info}
+
+  User Query: {user_query}
+
+  Extract:
+  1. Which columns are being requested (SELECT) - specify table.column for JOIN queries
+  2. What filters/conditions are being applied (WHERE)
+  3. Any JOIN requirements (file names AND join columns if specified)
+  4. Any sorting requirements (ORDER BY)
+  5. Any aggregations (COUNT, SUM, AVG, etc.)
+  6. Limit on results
+
+  CRITICAL RULES FOR UNDERSTANDING:
+
+  A. JOIN DETECTION AND EXTRACTION:
+     VERY IMPORTANT: Extract BOTH file name AND join column if user provides them
+     
+     Patterns to detect:
+     - "join with [file_name]" → extract file_name, no join_column (will use primary key)
+     - "join with [file_name] on [column]" → extract BOTH file_name AND column
+     - "join [file_name] using [column]" → extract BOTH file_name AND column
+     - "from [file_name]" → extract file_name
+     - "merge with [file_name] on [column]" → extract BOTH file_name AND column
+     
+     Examples:
+     - "join with suppliers.csv" → {{"file_name": "suppliers.csv", "join_column": null}}
+     - "join with suppliers.csv on supplier_id" → {{"file_name": "suppliers.csv", "join_column": "supplier_id"}}
+     - "join suppliers.csv using vendor_code" → {{"file_name": "suppliers.csv", "join_column": "vendor_code"}}
+     
+     CRITICAL: If user mentions a column name after "on" or "using", you MUST capture it in join_column field!
+
+  B. NULL/BLANK VALUE DETECTION:
+     - Words like "blank", "empty", "null", "missing", "not filled" indicate NULL checks
+     - "where X is blank" → check if X IS NULL
+     - "where X is not blank" → check if X IS NOT NULL
+     - "any column is blank" → check if ANY of the columns IS NULL (use OR logic)
+     - "all columns are blank" → check if ALL columns ARE NULL (use AND logic)
+     - When checking for blank/null values, DO NOT use the "values" field - use a special "null_check" field instead
+
+  C. LOGICAL OPERATORS:
+     - "any of" / "either" / "or" → OR logic between conditions
+     - "all of" / "both" / "and" → AND logic between conditions
+     - "where any column is blank" → (col1 IS NULL OR col2 IS NULL OR col3 IS NULL)
+     - "where all columns are blank" → (col1 IS NULL AND col2 IS NULL AND col3 IS NULL)
+
+  D. VALUE MATCHING:
+     - Only populate "values" field when user provides actual values to match
+     - "where status = active" → values: ["active"]
+     - "where status is blank" → null_check: true, values: []
+
+  E. COLUMN QUALIFICATION:
+     - For JOIN queries, try to identify which table columns belong to
+     - If ambiguous, use table.column format when possible
+     - For single table queries, column name alone is fine
+
+  F. NEGATION:
+     - "not blank" / "not empty" / "filled" → IS NOT NULL
+     - "not equal" / "not matching" → != operator
+
+  G. LENGTH/STRING OPERATIONS:
+     - "length of column" / "number of characters in column" → use LENGTH function
+     - IMPORTANT: Mark this as a LENGTH operation by adding "function": "LENGTH" in the filter
+     - Example: "where length of STATUS is 5" → add "function": "LENGTH" to filter
+     - DO NOT put LENGTH() in the field name - keep field as just the column name
+     - The SQL generator will automatically cast numeric columns and leave text columns as-is
+
+  Return ONLY a JSON object with this structure:
+  {{
+      "intent": "select or update",
+      "columns": ["table1.column1", "table2.column2"] or ["*"] for all columns,
+      "joins": [
+          {{
+              "file_name": "filename.csv",
+              "join_column": "column_name or null",
+              "join_type": "INNER"
+          }}
+      ],
+      "filters": [
+          {{
+              "field": "column_name or table.column_name",
+              "operator": "=",
+              "values": ["value1", "value2"],
+              "null_check": false,
+              "logical_connector": "AND"
+          }},
+          {{
+              "field": "column_name2",
+              "operator": "IS NULL",
+              "values": [],
+              "null_check": true,
+              "logical_connector": "OR"
+          }}
+      ],
+      "order_by": {{"column": "column_name", "direction": "ASC"}},
+      "aggregations": [{{"function": "COUNT", "column": "*"}}],
+      "limit": 10
+  }}
+
+  FIELD EXPLANATIONS:
+  
+  joins array:
+  - "file_name": The file name mentioned by user (e.g., "suppliers.csv")
+  - "join_column": Column name if user specified (e.g., "on supplier_id"), otherwise null
+  - "join_type": Usually "INNER", can be "LEFT", "RIGHT", "FULL"
+  
+  filters array:
+  - "field": Column name to filter on (use table.column for JOINs if clear)
+  - "operator": =, !=, <, >, <=, >=, LIKE, IS NULL, IS NOT NULL, IN
+  - "values": Array of values to match (empty if null_check is true)
+  - "null_check": true if checking for NULL/blank values, false otherwise
+  - "logical_connector": "AND" or "OR" - how this filter connects to the next one
+
+  EXAMPLES:
+
+  Query: "Get records where status is active"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["active"], "null_check": false, "logical_connector": "AND"}}
+      ]
+  }}
+
+  Query: "Join with suppliers.csv"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": null, "join_type": "INNER"}}
+      ],
+      "filters": []
+  }}
+
+  Query: "Join with suppliers.csv on supplier_id where status is active"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": "supplier_id", "join_type": "INNER"}}
+      ],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["active"], "null_check": false, "logical_connector": "AND"}}
+      ]
+  }}
+
+  Query: "Get all records where material_group is blank"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [],
+      "filters": [
+          {{"field": "material_group", "operator": "IS NULL", "values": [], "null_check": true, "logical_connector": "AND"}}
+      ]
+  }}
+
+  Query: "Get records where any of material_group, base_unit, or category are blank"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [],
+      "filters": [
+          {{"field": "material_group", "operator": "IS NULL", "values": [], "null_check": true, "logical_connector": "OR"}},
+          {{"field": "base_unit", "operator": "IS NULL", "values": [], "null_check": true, "logical_connector": "OR"}},
+          {{"field": "category", "operator": "IS NULL", "values": [], "null_check": true, "logical_connector": "OR"}}
+      ]
+  }}
+
+  Query: "Join suppliers.csv and categories.csv using category_id, get active products"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": null, "join_type": "INNER"}},
+          {{"file_name": "categories.csv", "join_column": "category_id", "join_type": "INNER"}}
+      ],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["active"], "null_check": false, "logical_connector": "AND"}}
+      ]
+  }}
+  Query: "Get records where length of status is 5"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["5"], "null_check": false, "logical_connector": "AND", "function": "LENGTH"}}
+      ]
+  }}
+
+  Query: "Get records where length of date_field is greater than 8"
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [],
+      "filters": [
+          {{"field": "date_field", "operator": ">", "values": ["8"], "null_check": false, "logical_connector": "AND", "function": "LENGTH"}}
+      ]
+  }}
+
+  DO NOT include any explanation, ONLY return the JSON object.
+
+sql_generation: |
+  Generate a SQL query based on this analyzed plan.
+
+  Primary Table: {table_name}
+  All Tables Schema: {schema}
+  Join Metadata: {join_metadata}
+
+  Query Plan:
+  {query_plan}
+
+  Corrected Filter Values:
+  {corrected_values}
+
+  CRITICAL SQL GENERATION RULES:
+
+  1. JOIN HANDLING:
+     - Use the join_metadata to construct proper JOIN clauses
+     - join_metadata contains resolved information:
+       * table_name: The actual table to join
+       * join_column: The column to join on (validated)
+       * primary_table_column: Column in primary table (usually same as join_column)
+       * join_type: INNER, LEFT, RIGHT, or FULL
+       * join_source: 'user_specified' or 'primary_key' (indicates where join column came from)
+     
+     - Use table aliases for clarity when needed (e.g., t1, t2)
+     - Ensure all columns in SELECT are properly qualified with table names when there's ambiguity
+     
+     Example:
+     FROM materials m
+     INNER JOIN suppliers s ON m.supplier_id = s.supplier_id
+     WHERE m.status = 'active'
+
+  2. NULL VALUE HANDLING:
+     - If filter has "null_check": true, use IS NULL or IS NOT NULL operators
+     - NEVER use IN () with empty array for NULL checks
+     - "operator": "IS NULL" → WHERE column_name IS NULL
+     - "operator": "IS NOT NULL" → WHERE column_name IS NOT NULL
+
+  3. LOGICAL CONNECTORS:
+     - Pay attention to "logical_connector" field in each filter
+     - "OR" connector: Use parentheses for clarity: (col1 IS NULL OR col2 IS NULL)
+     - "AND" connector: Standard AND between conditions
+     - When mixing AND/OR, use proper parentheses for precedence
+
+  4. VALUE MATCHING:
+     - Use corrected filter values from the validation step
+     - Single value: WHERE column = 'value'
+     - Multiple values: WHERE column IN ('value1', 'value2')
+     - Empty values array with null_check=true: Use IS NULL/IS NOT NULL
+
+  5. COLUMN SELECTION:
+     - If columns array is ["*"] or empty, use SELECT *
+     - For JOINs with SELECT *, consider selecting from all tables: SELECT t1.*, t2.*
+     - Otherwise, SELECT specific columns listed
+     - Always qualify column names if there's potential for ambiguity
+
+  6. COLUMN QUALIFICATION IN WHERE CLAUSES:
+     - For JOINs, qualify filter columns with table names to avoid ambiguity
+     - If filter field already has table.column format, use it directly
+     - If not qualified, use primary table name as prefix
+     - Example: WHERE materials.status = 'active'
+
+  7. SQLITE COMPATIBILITY:
+     - Use single quotes for string values
+     - Use proper escaping for special characters
+     - No nested subqueries unless necessary
+     - Standard SQLite syntax
+
+  8. QUERY STRUCTURE:
+     - Start with SELECT
+     - Add FROM clause with primary table
+     - Add JOIN clauses for each join in join_metadata
+     - Add WHERE clause only if filters exist
+     - Add ORDER BY if specified
+     - Add LIMIT if specified
+     - Use proper spacing and formatting for readability
+     
+  9. LENGTH FUNCTION HANDLING:
+     CRITICAL: Check column type in schema BEFORE applying LENGTH
+     
+     Steps:
+     1. Look at the filter's "field" name
+     2. Check schema {schema} for that column's type
+     3. Apply appropriate LENGTH syntax:
+     
+     For TEXT columns:
+       - Use: LENGTH(column_name)
+       - No casting needed
+     
+     For REAL or INTEGER columns:
+       - Use: LENGTH(CAST(CAST(column_name AS INTEGER) AS TEXT))
+       - Double cast removes decimal point first
+     
+     Example decision process:
+     - Filter has: {{"field": "material_group", "function": "LENGTH"}}
+     - Check schema: "material_group": "TEXT"
+     - Generate: LENGTH(material_group) > 5
+     
+     - Filter has: {{"field": "date_field", "function": "LENGTH"}}
+     - Check schema: "date_field": "REAL"
+     - Generate: LENGTH(CAST(CAST(date_field AS INTEGER) AS TEXT)) > 8
+
+  EXAMPLES:
+
+  Example 1 - Single table with NULL check:
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "filters": [
+          {{"field": "material_group", "operator": "IS NULL", "null_check": true}}
+      ]
+  }}
+  Join Metadata: []
+  
+  Correct SQL:
+  SELECT * FROM materials 
+  WHERE material_group IS NULL
+
+  Example 2 - Simple JOIN without explicit column (uses primary key):
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": null}}
+      ]
+  }}
+  Join Metadata:
+  [
+      {{
+          "table_name": "suppliers",
+          "join_column": "supplier_id",
+          "primary_table_column": "supplier_id",
+          "join_type": "INNER",
+          "join_source": "primary_key"
+      }}
+  ]
+  
+  Correct SQL:
+  SELECT m.*, s.*
+  FROM materials m
+  INNER JOIN suppliers s ON m.supplier_id = s.supplier_id
+
+  Example 3 - JOIN with explicit column and filters:
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": "vendor_code"}}
+      ],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["active"], "null_check": false, "logical_connector": "AND"}},
+          {{"field": "material_group", "operator": "IS NOT NULL", "null_check": true}}
+      ]
+  }}
+  Join Metadata:
+  [
+      {{
+          "table_name": "suppliers",
+          "join_column": "vendor_code",
+          "primary_table_column": "vendor_code",
+          "join_type": "INNER",
+          "join_source": "user_specified"
+      }}
+  ]
+  
+  Correct SQL:
+  SELECT m.*, s.*
+  FROM materials m
+  INNER JOIN suppliers s ON m.vendor_code = s.vendor_code
+  WHERE m.status = 'active' AND m.material_group IS NOT NULL
+
+  Example 4 - Multiple JOINs with OR conditions:
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["materials.material_id", "suppliers.supplier_name", "categories.category_name"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": "supplier_id"}},
+          {{"file_name": "categories.csv", "join_column": "category_id"}}
+      ],
+      "filters": [
+          {{"field": "material_group", "operator": "IS NULL", "null_check": true, "logical_connector": "OR"}},
+          {{"field": "base_unit", "operator": "IS NULL", "null_check": true, "logical_connector": "OR"}}
+      ]
+  }}
+  Join Metadata:
+  [
+      {{
+          "table_name": "suppliers",
+          "join_column": "supplier_id",
+          "primary_table_column": "supplier_id",
+          "join_type": "INNER",
+          "join_source": "user_specified"
+      }},
+      {{
+          "table_name": "categories",
+          "join_column": "category_id",
+          "primary_table_column": "category_id",
+          "join_type": "INNER",
+          "join_source": "user_specified"
+      }}
+  ]
+  
+  Correct SQL:
+  SELECT m.material_id, s.supplier_name, c.category_name
+  FROM materials m
+  INNER JOIN suppliers s ON m.supplier_id = s.supplier_id
+  INNER JOIN categories c ON m.category_id = c.category_id
+  WHERE (m.material_group IS NULL OR m.base_unit IS NULL)
+
+  Example 5 - JOIN with corrected values:
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "joins": [
+          {{"file_name": "suppliers.csv", "join_column": null}}
+      ],
+      "filters": [
+          {{"field": "status", "operator": "=", "values": ["active"], "corrected_filter_values": ["Active"]}}
+      ]
+  }}
+  Corrected Values: status: ['Active']
+  
+  Correct SQL:
+  SELECT m.*, s.*
+  FROM materials m
+  INNER JOIN suppliers s ON m.supplier_id = s.supplier_id
+  WHERE m.status = 'Active'
+
+  Example 6 - LENGTH function on TEXT column:
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "filters": [
+          {{"field": "material_group", "operator": ">", "values": ["5"], "function": "LENGTH"}}
+      ]
+  }}
+  Schema shows: "material_group": "TEXT"
+  
+  Correct SQL:
+  SELECT * FROM materials
+  WHERE LENGTH(material_group) > 5
+  
+  (No casting needed - material_group is TEXT type)
+
+  Example 7 - LENGTH function on NUMERIC column (CRITICAL):
+  Plan:
+  {{
+      "intent": "select",
+      "columns": ["*"],
+      "filters": [
+          {{"field": "date_field", "operator": ">", "values": ["8"], "function": "LENGTH"}}
+      ]
+  }}
+  Schema shows: "date_field": "REAL"
+  
+  Correct SQL:
+  SELECT * FROM materials
+  WHERE LENGTH(CAST(CAST(date_field AS INTEGER) AS TEXT)) > 8
+  
+  WHY DOUBLE CAST (ONLY for REAL/INTEGER types):
+  1. First CAST to INTEGER: Removes decimal (7082025.0 → 7082025)
+  2. Second CAST to TEXT: For LENGTH function (7082025 → "7082025")
+  3. Result: Accurate character count (7 characters, not 9)
+  
+  IMPORTANT: Only apply double cast when schema shows REAL or INTEGER type!
+  
+  Best practice: LENGTH(CAST(CAST(numeric_column AS INTEGER) AS TEXT))
+
+  WRONG EXAMPLES TO AVOID:
+  
+  ❌ WHERE material_group IN () 
+     ✓ WHERE material_group IS NULL
+  
+  ❌ WHERE (material_group = NULL OR base_unit = NULL)
+     ✓ WHERE (material_group IS NULL OR base_unit IS NULL)
+  
+  ❌ SELECT * FROM materials, suppliers WHERE materials.id = suppliers.id
+     ✓ SELECT * FROM materials m INNER JOIN suppliers s ON m.id = s.id
+  
+  ❌ FROM materials JOIN suppliers (missing ON clause)
+     ✓ FROM materials m INNER JOIN suppliers s ON m.supplier_id = s.supplier_id
+  
+  ❌ WHERE status = 'active' (when join exists but column not qualified)
+     ✓ WHERE m.status = 'active'
+  
+  ❌ WHERE LENGTH(numeric_column) > 8 (includes decimal point in count)
+     ✓ WHERE LENGTH(CAST(CAST(numeric_column AS INTEGER) AS TEXT)) > 8
+
+  Return ONLY the SQL query, no explanations or markdown formatting.
+
+query_fixer: |
+  The following SQL query failed with an error. Fix it.
+
+  Original Query:
+  {original_query}
+
+  Error Message:
+  {error_message}
+
+  Table Schema:
+  {schema}
+
+  Available Data Sample:
+  {sample_data}
+
+  COMMON ISSUES AND FIXES:
+
+  1. EMPTY IN CLAUSE:
+     Problem: WHERE column IN ()
+     Fix: Remove the condition or use IS NULL if checking for blanks
+     Example: WHERE status IN () → WHERE status IS NULL
+
+  2. NULL COMPARISON:
+     Problem: WHERE column = NULL or column != NULL
+     Fix: Use IS NULL or IS NOT NULL
+     Example: WHERE status = NULL → WHERE status IS NULL
+
+  3. AMBIGUOUS COLUMN NAMES IN JOINS:
+     Problem: Column exists in multiple tables without qualification
+     Fix: Add table prefix to column names
+     Example: WHERE status = 'active' → WHERE materials.status = 'active'
+
+  4. MISSING JOIN CONDITION:
+     Problem: JOIN without ON clause
+     Fix: Add proper ON condition with matching columns
+     Example: FROM materials JOIN suppliers → FROM materials m JOIN suppliers s ON m.supplier_id = s.supplier_id
+
+  5. COLUMN NAME ERRORS:
+     Problem: Column doesn't exist in schema
+     Fix: Check schema and use correct column name
+     Tip: Check for typos, case sensitivity, or use available columns from schema
+
+  6. STRING ESCAPING:
+     Problem: Unescaped quotes or special characters
+     Fix: Use proper SQL escaping with single quotes
+     Example: WHERE name = "O'Brien" → WHERE name = 'O''Brien'
+
+  7. LOGICAL OPERATOR ISSUES:
+     Problem: Missing parentheses in complex OR/AND conditions
+     Fix: Add parentheses for proper precedence
+     Example: WHERE a = 1 OR b = 2 AND c = 3 → WHERE a = 1 OR (b = 2 AND c = 3)
+
+  8. DATA TYPE MISMATCHES:
+     Problem: Comparing text to number or vice versa
+     Fix: Ensure proper data type casting or comparison
+     Example: WHERE age = '25' (if age is INTEGER) → WHERE age = 25
+
+  9. SQLITE SYNTAX ERRORS:
+     Problem: Using unsupported SQL syntax
+     Fix: Use SQLite-compatible syntax
+     Example: Avoid MySQL-specific or PostgreSQL-specific syntax
+
+  10. INVALID TABLE OR COLUMN REFERENCES:
+      Problem: Referencing tables or columns that don't exist
+      Fix: Verify against schema and use correct references
+
+  ANALYSIS STEPS:
+  1. Read the error message carefully - it often points to the exact issue
+  2. Check if it's a NULL-related issue (IN (), = NULL, etc.)
+  3. For JOIN queries, verify:
+     - All joined tables exist in schema
+     - JOIN conditions use valid columns from both tables
+     - Ambiguous columns are properly qualified with table names
+  4. Verify all column names exist in the schema
+  5. Check for proper string escaping and quotes
+  6. Ensure logical operators (AND/OR) have proper parentheses
+  7. Validate data types match the operations being performed
+  8. Confirm SQLite compatibility
+
+  FIXING STRATEGY:
+  - If error mentions "no such column", check schema for correct column name
+  - If error mentions "ambiguous column", add table prefix to column
+  - If error mentions "syntax error near", check SQL syntax and formatting
+  - If error mentions empty IN clause, replace with IS NULL or remove condition
+  - If error mentions JOIN, verify ON clause exists and uses valid columns
+
+  Fix the query and return ONLY the corrected SQL query, no explanations or markdown formatting.
