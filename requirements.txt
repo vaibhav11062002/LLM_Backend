@@ -63,10 +63,8 @@ markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 matplotlib==3.10.0
 mdurl==0.1.2
-mssql-django==1.5
 multidict==6.6.4
 murmurhash==1.0.13
-mysqlclient==2.2.7
 numpy==2.2.2
 openai==1.102.0
 openpyxl==3.1.5
@@ -77,14 +75,11 @@ preshed==3.0.10
 propcache==0.3.2
 proto-plus==1.26.1
 protobuf==5.29.5
-psycopg==3.2.6
-psycopg2==2.9.10
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
 pydantic==2.11.7
 pydantic_core==2.33.2
 Pygments==2.19.1
-pyodbc==5.2.0
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
@@ -129,3 +124,4 @@ wrapt==1.17.2
 xlrd==2.0.1
 yarl==1.20.1
 zipp==3.23.0
+gunicorn
