@@ -77,6 +77,7 @@ class LLMManager:
             logger.error(f"Error in LLM generate: {e}")
             return None
 def create_gemini_llm():
+    print(os.getenv("GEMINI_API_KEY"))
     return LLMManager(
         provider="gemini",
         model="gemini/gemini-2.5-flash",
