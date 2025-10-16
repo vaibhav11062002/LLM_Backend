@@ -32,7 +32,7 @@ python-dotenv>=1.0.0
 pyyaml>=6.0
 
 # LLM dependencies (adjust based on your llm_config.py)
-google-generativeai>=0.3.0  # For Gemini API
+google-generativeai # For Gemini API
 
 # Database
 # sqlite3 is included in Python standard library
