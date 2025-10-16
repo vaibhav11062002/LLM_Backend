@@ -80,7 +80,7 @@ def create_gemini_llm():
     print(os.getenv("GEMINI_API_KEY"))
     return LLMManager(
         provider="gemini",
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         api_key=os.getenv("GEMINI_API_KEY")
     )
 def create_openai_llm():
